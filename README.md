@@ -1,6 +1,6 @@
 ## Speech to text Application using *Python* & *Streamlit* and pre-trained models
 
-![speech_to_text_app_overview]speech-to-text-app-overview.png
+![speech_to_text_app_overview](speech-to-text-app-overview.png)
 This speech to text application is based on 2 [notebook tutorials](https://github.com/ovh/ai-training-examples/tree/main/notebooks/natural-language-processing/speech-to-text/conda) *(Basics and advanced parts)*. To better understand the code, we recommend that you read these notebooks.
 
 ### Files description
