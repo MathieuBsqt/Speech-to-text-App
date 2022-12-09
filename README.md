@@ -5,7 +5,7 @@ This speech to text application is based on 2 [notebook tutorials](https://githu
 ### Files description
 - `requirements.txt` and `packages.txt` files contain the librairies used by our speech to text app
 - `main.py` and `app.py` are the files of the application
-- `Dockerfile` allows you to deploy your app on **AI Deploy**
+- `Dockerfile` allows you to deploy your app
 - `download_models.py` is an optional script that allows you to download the models required by our Speech to Text Application and save them in a folder or an Object Storage with AI Deploy.
 Storing your models in a folder will save you some time. Indeed, you will not have to download them every time you launch the app!
 
