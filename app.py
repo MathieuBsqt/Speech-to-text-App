@@ -21,7 +21,7 @@ import pickle
 import re
 import streamlit as st
 import time
-
+import uuid
 
 def config():
     """
@@ -32,25 +32,31 @@ def config():
     # Set config
     st.set_page_config(page_title="Speech to Text", page_icon="📝")
 
-    # Create a Data Directory
-    # Will not be executed with AI Deploy because it is indicated in the DockerFile of the app
-
-    if not os.path.exists("../data"):
-        os.makedirs("../data")
-
     # Initialize session state variables
-    if 'page_index' not in st.session_state:
-        st.session_state['page_index'] = 0 # Handle which page should be displayed (home page, results page, rename page)
-        st.session_state['txt_transcript'] = "" # Save the transcript as .txt so we can display it again on the results page
+    if 'my_uuid' not in st.session_state:
+        my_uuid = uuid.uuid1()
+        st.session_state["my_uuid"] = str(my_uuid)
+
+        st.session_state[
+            'page_index'] = 0  # Handle which page should be displayed (home page, results page, rename page)
+        st.session_state[
+            'txt_transcript'] = ""  # Save the transcript as .txt so we can display it again on the results page
         st.session_state["process"] = []  # Save the results obtained so we can display them again on the results page
-        st.session_state['srt_txt'] = ""  #  Save the transcript in a subtitles case to display it on the results page
+        st.session_state['srt_txt'] = ""  # Save the transcript in a subtitles case to display it on the results page
         st.session_state['srt_token'] = 0  # Is subtitles parameter enabled or not
-        st.session_state['audio_file'] = None  # Save the audio file provided by the user so we can display it again on the results page
+        st.session_state[
+            'audio_file'] = None  # Save the audio file provided by the user so we can display it again on the results page
         st.session_state["start_time"] = 0  # Default audio player starting point (0s)
         st.session_state["summary"] = ""  # Save the summary of the transcript so we can display it on the results page
-        st.session_state["number_of_speakers"] = 0  # Save the number of speakers detected in the conversation (diarization)
+        st.session_state[
+            "number_of_speakers"] = 0  # Save the number of speakers detected in the conversation (diarization)
         st.session_state["chosen_mode"] = 0  # Save the mode chosen by the user (Diarization or not, timestamps or not)
-        st.session_state["btn_token_list"] = []  # List of tokens that indicates what options are activated to adapt the display on results page
+        st.session_state[
+            "btn_token_list"] = []  # List of tokens that indicates what options are activated to adapt the display on results page
+
+    # Create a Data Directory based on a unique id (to don't create conflicts if the app is used by several users)
+    if not os.path.exists("../" + st.session_state["my_uuid"]):
+        os.makedirs("../" + st.session_state["my_uuid"])
 
     # Display Text and CSS
     st.title("Speech to Text App 📝")
@@ -152,12 +158,12 @@ def load_models():
         # If models are stored in a folder, we import them. Otherwise, we import the models wuth their respective library
 
         try:
-            stt_tokenizer = pickle.load(open("models/STT_processor_hubert-large-ls960-ft.sav", 'rb'))
+            stt_tokenizer = pickle.load(open("models/STT_processor_hubert-large-ls960-ft2.sav", 'rb'))
         except FileNotFoundError:
             stt_tokenizer = Wav2Vec2Processor.from_pretrained("facebook/hubert-large-ls960-ft")
 
         try:
-            stt_model = pickle.load(open("models/STT_model_hubert-large-ls960-ft.sav", 'rb'))
+            stt_model = pickle.load(open("models/STT_model_hubert-large-ls960-ft2.sav", 'rb'))
         except FileNotFoundError:
             stt_model = HubertForCTC.from_pretrained("facebook/hubert-large-ls960-ft")
 
@@ -185,8 +191,9 @@ def load_models():
         try:
             dia_pipeline = pickle.load(open("models/dia_pipeline.sav", 'rb'))
         except FileNotFoundError:
-            dia_pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization@2.1", use_auth_token="ACCESS TOKEN GOES HERE")
-            #If the token hasn't been modified, dia_pipeline will automatically be set to None. The functionnality will then be disabled.
+            dia_pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization@2.1",
+                                                    use_auth_token="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")
+            # If the token hasn't been modified, dia_pipeline will automatically be set to None. The functionnality will then be disabled.
 
     return stt_tokenizer, stt_model, t5_tokenizer, t5_model, summarizer, dia_pipeline
 
@@ -281,7 +288,7 @@ def transcription(stt_tokenizer, stt_model, t5_tokenizer, t5_model, summarizer, 
         # Switching model for the better one
         if choose_better_model:
             with st.spinner("We are loading the better model. Please wait..."):
-                
+
                 try:
                     stt_tokenizer = pickle.load(open("models/STT_tokenizer2_wav2vec2-large-960h-lv60-self.sav", 'rb'))
                 except FileNotFoundError:
@@ -322,7 +329,7 @@ def transcription(stt_tokenizer, stt_model, t5_tokenizer, t5_model, summarizer, 
                     if filename.endswith((".mp3", ".mp4")):
                         new_audio, filename = convert_file_to_wav(myaudio, filename)
                     else:
-                        filename = "../data/" + filename
+                        filename = "../" + st.session_state["my_uuid"] + "/" + filename
                         myaudio.export(filename, format="wav")
 
                     # Differentiate speakers process
@@ -361,7 +368,7 @@ def transcription(stt_tokenizer, stt_model, t5_tokenizer, t5_model, summarizer, 
                     if timestamps_token:
                         update_session_state("chosen_mode", "NODIA_TS")
 
-                    filename = "../data/" + filename
+                    filename = "../" + st.session_state["my_uuid"] + "/" + filename
                     # Transcribe process with non Diarization Mode
                     save_result, txt_text, srt_text = transcription_non_diarization(filename, myaudio, start, end,
                                                                                     diarization_token, timestamps_token,
@@ -393,7 +400,7 @@ def transcription(stt_tokenizer, stt_model, t5_tokenizer, t5_model, summarizer, 
                                 txt_text += add_punctuation(t5_model, t5_tokenizer, my_split_text)
 
                 # Clean folder's files
-                clean_directory("../data")
+                clean_directory("../" + st.session_state["my_uuid"])
 
                 # Display the final transcript
                 if txt_text != "":
@@ -934,7 +941,7 @@ def transcribe_audio_part(filename, stt_model, stt_tokenizer, myaudio, sub_start
             # Get logits from the data structure containing all the information returned by the model and get our prediction
             logits = stt_model.to(device)(input_values).logits
             prediction = torch.argmax(logits, dim=-1)
-           
+
             # Decode & lower our string (model's output is only uppercase)
             if isinstance(stt_tokenizer, Wav2Vec2Tokenizer):
                 transcription = stt_tokenizer.batch_decode(prediction)[0]
@@ -1062,7 +1069,7 @@ def convert_file_to_wav(aud_seg, filename):
     :param filename: name of the file
     :return: name of the converted file
     """
-    filename = "../data/my_wav_file_" + filename[:-3] + "wav"
+    filename = "../" + st.session_state["my_uuid"] + "/my_wav_file_" + filename[:-3] + "wav"
     aud_seg.export(filename, format="wav")
 
     newaudio = AudioSegment.from_file(filename)
@@ -1380,4 +1387,3 @@ def extract_audio_from_yt_video(url):
         filename = None
 
     return filename
-
