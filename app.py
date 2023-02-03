@@ -9,8 +9,7 @@ from youtube_dl import DownloadError
 
 # Models
 import torch
-from transformers import pipeline, HubertForCTC, T5Tokenizer, T5ForConditionalGeneration, Wav2Vec2ForCTC, \
-    Wav2Vec2Processor, Wav2Vec2Tokenizer
+from transformers import pipeline, HubertForCTC, T5Tokenizer, T5ForConditionalGeneration, Wav2Vec2ForCTC, Wav2Vec2Processor, Wav2Vec2Tokenizer
 from pyannote.audio import Pipeline
 
 # Others
@@ -21,7 +20,7 @@ import pickle
 import re
 import streamlit as st
 import time
-import uuid
+
 
 def config():
     """
@@ -32,31 +31,27 @@ def config():
     # Set config
     st.set_page_config(page_title="Speech to Text", page_icon="📝")
 
-    # Initialize session state variables
-    if 'my_uuid' not in st.session_state:
-        my_uuid = uuid.uuid1()
-        st.session_state["my_uuid"] = str(my_uuid)
+    # Create a Data Directory
+    # Will not be executed with AI Deploy because it is indicated in the DockerFile of the app
 
-        st.session_state[
-            'page_index'] = 0  # Handle which page should be displayed (home page, results page, rename page)
-        st.session_state[
-            'txt_transcript'] = ""  # Save the transcript as .txt so we can display it again on the results page
+    if not os.path.exists("../data"):
+        os.makedirs("../data")
+
+    # Initialize session state variables
+    if 'page_index' not in st.session_state:
+        st.session_state['page_index'] = -1  # Handle which page should be displayed (token page, home page, results page, rename page)
+        st.session_state['txt_transcript'] = ""  # Save the transcript as .txt so we can display it again on the results page
         st.session_state["process"] = []  # Save the results obtained so we can display them again on the results page
         st.session_state['srt_txt'] = ""  # Save the transcript in a subtitles case to display it on the results page
         st.session_state['srt_token'] = 0  # Is subtitles parameter enabled or not
-        st.session_state[
-            'audio_file'] = None  # Save the audio file provided by the user so we can display it again on the results page
+        st.session_state['audio_file'] = None  # Save the audio file provided by the user so we can display it again on the results page
         st.session_state["start_time"] = 0  # Default audio player starting point (0s)
         st.session_state["summary"] = ""  # Save the summary of the transcript so we can display it on the results page
-        st.session_state[
-            "number_of_speakers"] = 0  # Save the number of speakers detected in the conversation (diarization)
+        st.session_state["number_of_speakers"] = 0  # Save the number of speakers detected in the conversation (diarization)
         st.session_state["chosen_mode"] = 0  # Save the mode chosen by the user (Diarization or not, timestamps or not)
-        st.session_state[
-            "btn_token_list"] = []  # List of tokens that indicates what options are activated to adapt the display on results page
-
-    # Create a Data Directory based on a unique id (to don't create conflicts if the app is used by several users)
-    if not os.path.exists("../" + st.session_state["my_uuid"]):
-        os.makedirs("../" + st.session_state["my_uuid"])
+        st.session_state["btn_token_list"] = []  # List of tokens that indicates what options are activated to adapt the display on results page
+        st.session_state["my_HF_token"] = "ACCESS_TOKEN_GOES_HERE"  # User's Token that allows the use of the diarization model
+        st.session_state["disable"] = True  # Default appearance of the button to change your token
 
     # Display Text and CSS
     st.title("Speech to Text App 📝")
@@ -155,15 +150,15 @@ def load_models():
 
     # Load facebook-hubert-large-ls960-ft model (English speech to text model)
     with st.spinner("Loading Speech to Text Model"):
-        # If models are stored in a folder, we import them. Otherwise, we import the models wuth their respective library
+        # If models are stored in a folder, we import them. Otherwise, we import the models with their respective library
 
         try:
-            stt_tokenizer = pickle.load(open("models/STT_processor_hubert-large-ls960-ft2.sav", 'rb'))
+            stt_tokenizer = pickle.load(open("models/STT_processor_hubert-large-ls960-ft.sav", 'rb'))
         except FileNotFoundError:
             stt_tokenizer = Wav2Vec2Processor.from_pretrained("facebook/hubert-large-ls960-ft")
 
         try:
-            stt_model = pickle.load(open("models/STT_model_hubert-large-ls960-ft2.sav", 'rb'))
+            stt_model = pickle.load(open("models/STT_model_hubert-large-ls960-ft.sav", 'rb'))
         except FileNotFoundError:
             stt_model = HubertForCTC.from_pretrained("facebook/hubert-large-ls960-ft")
 
@@ -192,8 +187,8 @@ def load_models():
             dia_pipeline = pickle.load(open("models/dia_pipeline.sav", 'rb'))
         except FileNotFoundError:
             dia_pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization@2.1",
-                                                    use_auth_token="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")
-            # If the token hasn't been modified, dia_pipeline will automatically be set to None. The functionnality will then be disabled.
+                                                    use_auth_token=st.session_state["my_HF_token"])
+            # If the token hasn't been modified, dia_pipeline will automatically be set to None. The functionality will then be disabled.
 
     return stt_tokenizer, stt_model, t5_tokenizer, t5_model, summarizer, dia_pipeline
 
@@ -327,38 +322,26 @@ def transcription(stt_tokenizer, stt_model, t5_tokenizer, t5_model, summarizer, 
 
                     # Convert mp3/mp4 to wav (Differentiate speakers mode only accepts wav files)
                     if filename.endswith((".mp3", ".mp4")):
-                        new_audio, filename = convert_file_to_wav(myaudio, filename)
+                        myaudio, filename = convert_file_to_wav(myaudio, filename)
                     else:
-                        filename = "../" + st.session_state["my_uuid"] + "/" + filename
+                        filename = "../data/" + filename
                         myaudio.export(filename, format="wav")
 
                     # Differentiate speakers process
                     diarization_timestamps, number_of_speakers = diarization_treatment(filename, dia_pipeline,
-                                                                                       max_space, srt_token, start)
+                                                                                       max_space, srt_token)
                     # Saving the number of detected speakers
                     update_session_state("number_of_speakers", number_of_speakers)
 
-                    # If it has not detected anyone, we opt for a non diarization mode to save time
-                    if number_of_speakers == 0:
-                        diarization_token = False
-                        save_result, txt_text, srt_text = transcription_non_diarization(filename, myaudio, start, end,
-                                                                                        diarization_token,
-                                                                                        timestamps_token,
-                                                                                        srt_token, summarize_token,
-                                                                                        stt_model, stt_tokenizer,
-                                                                                        min_space, max_space,
-                                                                                        save_result, txt_text,
-                                                                                        srt_text)
                     # Transcribe process with Diarization Mode
-                    else:
-                        save_result, txt_text, srt_text = transcription_diarization(filename, diarization_timestamps,
-                                                                                    stt_model,
-                                                                                    stt_tokenizer,
-                                                                                    diarization_token,
-                                                                                    srt_token, summarize_token,
-                                                                                    timestamps_token, myaudio, start,
-                                                                                    save_result,
-                                                                                    txt_text, srt_text)
+                    save_result, txt_text, srt_text = transcription_diarization(filename, diarization_timestamps,
+                                                                                stt_model,
+                                                                                stt_tokenizer,
+                                                                                diarization_token,
+                                                                                srt_token, summarize_token,
+                                                                                timestamps_token, myaudio, start,
+                                                                                save_result,
+                                                                                txt_text, srt_text)
 
                 # Non Diarization Mode
                 else:
@@ -368,7 +351,7 @@ def transcription(stt_tokenizer, stt_model, t5_tokenizer, t5_model, summarizer, 
                     if timestamps_token:
                         update_session_state("chosen_mode", "NODIA_TS")
 
-                    filename = "../" + st.session_state["my_uuid"] + "/" + filename
+                    filename = "../data/" + filename
                     # Transcribe process with non Diarization Mode
                     save_result, txt_text, srt_text = transcription_non_diarization(filename, myaudio, start, end,
                                                                                     diarization_token, timestamps_token,
@@ -400,7 +383,7 @@ def transcription(stt_tokenizer, stt_model, t5_tokenizer, t5_model, summarizer, 
                                 txt_text += add_punctuation(t5_model, t5_tokenizer, my_split_text)
 
                 # Clean folder's files
-                clean_directory("../" + st.session_state["my_uuid"])
+                clean_directory("../data")
 
                 # Display the final transcript
                 if txt_text != "":
@@ -645,6 +628,9 @@ def transcription_diarization(filename, diarization_timestamps, stt_model, stt_t
     :param srt_text: generated .srt transcript
     :return: results of transcribing action
     """
+    # Numeric counter that identifies each sequential subtitle
+    srt_index = 1
+
     # Handle a rare case : Only the case if only one "list" in the list (it makes a classic list) not a list of list
     if not isinstance(diarization_timestamps[0], list):
         diarization_timestamps = [diarization_timestamps]
@@ -660,11 +646,11 @@ def transcription_diarization(filename, diarization_timestamps, stt_model, stt_t
         # Initial audio has been split with start & end values
         # It begins to 0s, but the timestamps need to be adjust with +start*1000 values to adapt the gap
         if transcription != "":
-            save_result, txt_text, srt_text = display_transcription(diarization_token, summarize_token,
+            save_result, txt_text, srt_text, srt_index = display_transcription(diarization_token, summarize_token,
                                                                     srt_token, timestamps_token,
                                                                     transcription, save_result, txt_text,
                                                                     srt_text,
-                                                                    index, sub_start + start * 1000,
+                                                                    srt_index, sub_start + start * 1000,
                                                                     sub_end + start * 1000, elt)
     return save_result, txt_text, srt_text
 
@@ -691,6 +677,10 @@ def transcription_non_diarization(filename, myaudio, start, end, diarization_tok
     :param srt_text: generated .srt transcript
     :return: results of transcribing action
     """
+
+    # Numeric counter identifying each sequential subtitle
+    srt_index = 1
+
     # get silences
     silence_list = detect_silences(myaudio)
     if silence_list != []:
@@ -709,12 +699,12 @@ def transcription_non_diarization(filename, myaudio, start, end, diarization_tok
         # Initial audio has been split with start & end values
         # It begins to 0s, but the timestamps need to be adjust with +start*1000 values to adapt the gap
         if transcription != "":
-            save_result, txt_text, srt_text = display_transcription(diarization_token, summarize_token,
+            save_result, txt_text, srt_text, srt_index = display_transcription(diarization_token, summarize_token,
                                                                     srt_token, timestamps_token,
                                                                     transcription, save_result,
                                                                     txt_text,
                                                                     srt_text,
-                                                                    i, sub_start + start * 1000,
+                                                                    srt_index, sub_start + start * 1000,
                                                                     sub_end + start * 1000)
 
     return save_result, txt_text, srt_text
@@ -958,8 +948,51 @@ def transcribe_audio_part(filename, stt_model, stt_tokenizer, myaudio, sub_start
         st.stop()
 
 
+def optimize_subtitles(transcription, srt_index, sub_start, sub_end, srt_text):
+    """
+    Create & Optimize the subtitles (avoid a too long reading when many words are said in a short time)
+    The optimization (if statement) can sometimes create a gap between the subtitles and the video, if there is music
+    for example. In this case, it may be wise to disable the optimization, never going through the if statement.
+    :param transcription: transcript generated for an audio chunk
+    :param srt_index: Numeric counter that identifies each sequential subtitle
+    :param sub_start: beginning of the transcript
+    :param sub_end: end of the transcript
+    :param srt_text: generated .srt transcript
+    """
+
+    transcription_length = len(transcription)
+
+    # Length of the transcript should be limited to about 42 characters per line to avoid this problem
+    if transcription_length > 42:
+        # Split the timestamp and its transcript in two parts
+        # Get the middle timestamp
+        diff = (timedelta(milliseconds=sub_end) - timedelta(milliseconds=sub_start)) / 2
+        middle_timestamp = str(timedelta(milliseconds=sub_start) + diff).split(".")[0]
+
+        # Get the closest middle index to a space (we don't divide transcription_length/2 to avoid cutting a word)
+        space_indexes = [pos for pos, char in enumerate(transcription) if char == " "]
+        nearest_index = min(space_indexes, key=lambda x: abs(x - transcription_length / 2))
+
+        # First transcript part
+        first_transcript = transcription[:nearest_index]
+
+        # Second transcript part
+        second_transcript = transcription[nearest_index + 1:]
+
+        # Add both transcript parts to the srt_text
+        srt_text += str(srt_index) + "\n" + str(timedelta(milliseconds=sub_start)).split(".")[0] + " --> " + middle_timestamp + "\n" + first_transcript + "\n\n"
+        srt_index += 1
+        srt_text += str(srt_index) + "\n" + middle_timestamp + " --> " + str(timedelta(milliseconds=sub_end)).split(".")[0] + "\n" + second_transcript + "\n\n"
+        srt_index += 1
+    else:
+        # Add transcript without operations
+        srt_text += str(srt_index) + "\n" + str(timedelta(milliseconds=sub_start)).split(".")[0] + " --> " + str(timedelta(milliseconds=sub_end)).split(".")[0] + "\n" + transcription + "\n\n"
+
+    return srt_text, srt_index
+
+
 def display_transcription(diarization_token, summarize_token, srt_token, timestamps_token, transcription, save_result,
-                          txt_text, srt_text, index, sub_start, sub_end, elt=None):
+                          txt_text, srt_text, srt_index, sub_start, sub_end, elt=None):
     """
     Display results
     :param diarization_token: Differentiate or not the speakers (choice fixed by user)
@@ -970,7 +1003,7 @@ def display_transcription(diarization_token, summarize_token, srt_token, timesta
     :param save_result: whole process
     :param txt_text: generated .txt transcript
     :param srt_text: generated .srt transcript
-    :param index: audio file counter
+    :param srt_index : numeric counter that identifies each sequential subtitle
     :param sub_start: start value (s) of the considered audio part to transcribe
     :param sub_end: end value (s) of the considered audio part to transcribe
     :param elt: timestamp (diarization case only, otherwise elt = None)
@@ -998,16 +1031,7 @@ def display_transcription(diarization_token, summarize_token, srt_token, timesta
             st.write(temp_transcription + "\n\n")
 
             if srt_token:
-                # display text on two lines text if transcript is too long (many words in a short time)
-                transcription_length = len(transcription)
-                if transcription_length > 20:
-                    space_indexes = [pos for pos, char in enumerate(transcription) if char == " "]
-                    nearest_index = min(space_indexes, key=lambda x: abs(x - transcription_length / 2))  # 10 = 20/2
-                    transcription = transcription[:nearest_index] + "\n" + transcription[nearest_index + 1:]
-
-                srt_text += str(index) + "\n" + str(timedelta(milliseconds=sub_start)).split(".")[
-                    0] + " --> " + str(timedelta(milliseconds=sub_end)).split(".")[
-                                0] + "\n" + transcription + "\n\n"
+                srt_text, srt_index = optimize_subtitles(transcription, srt_index, sub_start, sub_end, srt_text)
 
     # Non diarization case
     else:
@@ -1024,17 +1048,11 @@ def display_transcription(diarization_token, summarize_token, srt_token, timesta
             st.write(transcription + "\n\n")
 
             if srt_token:
-                # display text on two lines text if transcript is too long (many words in a short time)
-                transcription_length = len(transcription)
-                if transcription_length > 20:
-                    space_indexes = [pos for pos, char in enumerate(transcription) if char == " "]
-                    space_index = transcription_length / 2
-                    nearest_index = min(space_indexes, key=lambda x: abs(x - space_index))  # 10 = 20/2
-                    transcription = transcription[:nearest_index] + "\n" + transcription[nearest_index + 1:]
-                srt_text += str(index) + "\n" + temp_timestamps + transcription + "\n\n"
+                srt_text, srt_index = optimize_subtitles(transcription, srt_index, sub_start, sub_end, srt_text)
+
         txt_text += transcription + " "  # So x seconds sentences are separated
 
-    return save_result, txt_text, srt_text
+    return save_result, txt_text, srt_text, srt_index
 
 
 def add_punctuation(t5_model, t5_tokenizer, transcript):
@@ -1069,7 +1087,7 @@ def convert_file_to_wav(aud_seg, filename):
     :param filename: name of the file
     :return: name of the converted file
     """
-    filename = "../" + st.session_state["my_uuid"] + "/my_wav_file_" + filename[:-3] + "wav"
+    filename = "../data/my_wav_file_" + filename[:-3] + "wav"
     aud_seg.export(filename, format="wav")
 
     newaudio = AudioSegment.from_file(filename)
@@ -1102,11 +1120,21 @@ def get_diarization(dia_pipeline, filename):
     return diarization, number_of_speakers
 
 
-def convert_str_diarlist_to_timedelta(diarization_result, start):
+def confirm_token_change(hf_token, page_index):
+    """
+    A function that saves the hugging face token entered by the user.
+    It also updates the page index variable so we can indicate we now want to display the home page instead of the token page
+    :param hf_token: user's token
+    :param page_index: number that represents the home page index (mentioned in the main.py file)
+    """
+    update_session_state("my_HF_token", hf_token)
+    update_session_state("page_index", page_index)
+
+
+def convert_str_diarlist_to_timedelta(diarization_result):
     """
     Extract from Diarization result the given speakers with their respective speaking times and transform them in pandas timedelta objects
     :param diarization_result: result of diarization
-    :param start: start value (s) of the considered audio part to transcribe
     :return: list with timedelta intervals and their respective speaker
     """
 
@@ -1115,8 +1143,8 @@ def convert_str_diarlist_to_timedelta(diarization_result, start):
     diarization_timestamps = []
     for sample in segments:
         # Convert segment in a pd.Timedelta object
-        new_seg = [pd.Timedelta(seconds=round(sample["segment"]["start"] + start, 2)),
-                   pd.Timedelta(seconds=round(sample["segment"]["end"] + start, 2)), sample["label"]]
+        new_seg = [pd.Timedelta(seconds=round(sample["segment"]["start"], 2)),
+                   pd.Timedelta(seconds=round(sample["segment"]["end"], 2)), sample["label"]]
         # Start and end = speaking duration
         # label = who is speaking
         diarization_timestamps.append(new_seg)
@@ -1337,14 +1365,13 @@ def click_timestamp_btn(sub_start):
     update_session_state("start_time", int(sub_start / 1000))  # division to convert ms to s
 
 
-def diarization_treatment(filename, dia_pipeline, max_space, srt_token, start):
+def diarization_treatment(filename, dia_pipeline, max_space, srt_token):
     """
     Launch the whole diarization process to get speakers time intervals as pandas timedelta objects
     :param filename: name of the audio file
     :param dia_pipeline: Diarization Model (Differentiate speakers)
     :param max_space: Maximum temporal distance between two silences
     :param srt_token: Enable/Disable generate srt file (choice fixed by user)
-    :param start: start value (s) of the considered audio part to transcribe
     :return: speakers time intervals list and number of different detected speakers
     """
     # initialization
@@ -1354,7 +1381,7 @@ def diarization_treatment(filename, dia_pipeline, max_space, srt_token, start):
     diarization, number_of_speakers = get_diarization(dia_pipeline, filename)
 
     if len(diarization) > 0:
-        diarization_timestamps = convert_str_diarlist_to_timedelta(diarization, start)
+        diarization_timestamps = convert_str_diarlist_to_timedelta(diarization)
         diarization_timestamps = merge_speaker_times(diarization_timestamps, max_space, srt_token)
         diarization_timestamps = extending_timestamps(diarization_timestamps)
 
