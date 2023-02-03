@@ -11,10 +11,6 @@ This speech to text application is based on 2 [notebook tutorials](https://githu
 Storing your models in a folder will save you some time. Indeed, you will not have to download them every time you launch the app!
 
 ### Important
-To make it work with the diarization option (speakers differentiation), do not forget to **replace the default token by your own one** in the following line of code of the `app.py` file:
-
-<code>
-dia_pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization@2.1", use_auth_token="ACCESS TOKEN GOES HERE")
-</code>
+If you want the diarization option (speakers differentiation), you will need an access token. This token will be requested at the launch of the application. To create your token, follow the steps indicated on the model page. If the token is not specified, the application will be launched without this feature.
 
 
